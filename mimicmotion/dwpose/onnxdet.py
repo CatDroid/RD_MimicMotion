@@ -113,6 +113,7 @@ def preprocess(img, input_size, swap=(2, 0, 1)):
     padded_img = np.ascontiguousarray(padded_img, dtype=np.float32)
     return padded_img, r
 
+# 这里做目标检测 yolo 
 def inference_detector(session, oriImg):
     """run human detect 
     """

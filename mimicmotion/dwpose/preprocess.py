@@ -21,6 +21,7 @@ def get_video_pose(
         np.ndarray: sequence of video pose
     """
     # select ref-keypoint from reference pose for pose rescale
+    # 检测 参考照片的Pose 
     ref_pose = dwprocessor(ref_image)
     ref_keypoint_id = [0, 1, 2, 5, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
     ref_keypoint_id = [i for i in ref_keypoint_id \
@@ -33,8 +34,21 @@ def get_video_pose(
     vr = decord.VideoReader(video_path, ctx=decord.cpu(0))
     sample_stride *= max(1, int(vr.get_avg_fps() / 24))
 
+    print(f"dwpose len(vr) = {len(vr)}  sample_stride = {sample_stride}")
+
+    # 检测 视频的Pose 
     frames = vr.get_batch(list(range(0, len(vr), sample_stride))).asnumpy()
+
+    print(f"dwpose vr.get_batch sample_stride = {sample_stride} frames = {frames.shape}")
+
+    # dwpose len(vr) = 1059  sample_stride = 2  
+    # dwpose vr.get_batch sample_stride = 2 frames = (530, 1920, 1080, 3)
+
+    # frames: 不是取视频中的全部帧 作为 关键点姿态帧 而是取部分  
+
     detected_poses = [dwprocessor(frm) for frm in tqdm(frames, desc="DWPose")]
+
+    # 释放dwpose模型内存 
     dwprocessor.release_memory()
 
     detected_bodies = np.stack(

@@ -355,6 +355,9 @@ def inference_pose(session, out_bbox, oriImg):
 
     Args:
         session (ort.InferenceSession): ONNXRuntime session.
+        #
+        # 使用 ONNXRuntime session. 做推理 
+        #
         out_bbox (np.ndarray): bbox list
         oriImg (np.ndarray): Input image in shape.
 

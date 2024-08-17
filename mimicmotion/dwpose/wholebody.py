@@ -12,6 +12,11 @@ class Wholebody:
         providers = ['CPUExecutionProvider'] if device == 'cpu' else ['CUDAExecutionProvider']
         provider_options = None if device == 'cpu' else [{'device_id': 0}]
 
+        # 用的是 onnxruntime 做推理 
+
+        # pip install onnxruntime 
+        # pip install onnxruntime-gpu  GPU推理  pip install onnxruntime-gpu==1.16.3
+
         self.session_det = ort.InferenceSession(
             path_or_bytes=model_det, providers=providers,  provider_options=provider_options
         )

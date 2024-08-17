@@ -27,6 +27,8 @@ class UNetSpatioTemporalConditionOutput(BaseOutput):
 
     sample: torch.FloatTensor = None
 
+# class ModelMixin(torch.nn.Module, PushToHubMixin):
+# 这个是  nn.Module !
 
 class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin):
     r"""

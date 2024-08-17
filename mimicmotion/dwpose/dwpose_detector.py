@@ -23,6 +23,7 @@ class DWposeDetector:
         self.args = model_det, model_pose, device
 
     def release_memory(self):
+        print(f"DWposeDetector called release_memory")
         if hasattr(self, 'pose_estimation'):
             del self.pose_estimation
             import gc; gc.collect()
