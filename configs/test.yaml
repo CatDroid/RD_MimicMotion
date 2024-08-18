@@ -2,14 +2,17 @@
 base_model_path: stabilityai/stable-video-diffusion-img2vid-xt-1-1
 
 # checkpoint path
-ckpt_path: models/MimicMotion_1-1.pth
+#ckpt_path: models/MimicMotion_1-1.pth # 72帧用这个模型 用这个模型使用num_frames: 16 效果比  MimicMotion_1-1.pth 差
+ckpt_path: models/MimicMotion_1.pth
 
 test_case:
   - ref_video_path: assets/example_data/videos/pose1.mp4
     ref_image_path: assets/example_data/images/demo1.jpg
-    num_frames: 72
+    # tile_size @ pipeline_mimicmotion.py
+    num_frames: 4
     resolution: 576
-    frames_overlap: 6
+    # tile_overlap  @ pipeline_mimicmotion.py
+    frames_overlap: 2
     num_inference_steps: 25
     noise_aug_strength: 0
     guidance_scale: 2.0
@@ -18,3 +21,4 @@ test_case:
     seed: 42
 
 
+ 

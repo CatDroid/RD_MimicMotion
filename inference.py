@@ -68,19 +68,49 @@ def preprocess(video_path, image_path, resolution=576, sample_stride=2):
     image_pixels = np.transpose(np.expand_dims(image_pixels, 0), (0, 3, 1, 2))
     # -1 ~ 1 
     return torch.from_numpy(pose_pixels.copy()) / 127.5 - 1, torch.from_numpy(image_pixels) / 127.5 - 1
+    # 这里输出 会给到 run_pipeline 的参数 
 
 
 def run_pipeline(pipeline: MimicMotionPipeline, image_pixels, pose_pixels, device, task_config):
+
+    # dwpose len(vr) = 1059  sample_stride = 2
+    # dwpose vr.get_batch sample_stride = 2 frames = (530, 1920, 1080, 3)
+
+    print(f"inference.py image_pixels = {image_pixels.shape}") # torch.Size([1, 3, 1024, 576])  参考图像 只有1个
+    print(f"inference.py pose_pixels  = {pose_pixels.shape} ") # torch.Size([531, 3, 1024, 576]) pose是530+1个 !
+
     image_pixels = [to_pil_image(img.to(torch.uint8)) for img in (image_pixels + 1.0) * 127.5]
+    # 再转回256?
+
+    # 随机数 生成器 ??
     generator = torch.Generator(device=device)
     generator.manual_seed(task_config.seed)
+
+    # 到这里 image_pixels 是  list = 1
+    print(f"inference.py image_pixels list = {len(image_pixels)} ")
+    
+    # @ pipeline_mimicmotion.py 
     frames = pipeline(
-        image_pixels, image_pose=pose_pixels, num_frames=pose_pixels.size(0),
-        tile_size=task_config.num_frames, tile_overlap=task_config.frames_overlap,
-        height=pose_pixels.shape[-2], width=pose_pixels.shape[-1], fps=7,
-        noise_aug_strength=task_config.noise_aug_strength, num_inference_steps=task_config.num_inference_steps,
-        generator=generator, min_guidance_scale=task_config.guidance_scale, 
-        max_guidance_scale=task_config.guidance_scale, decode_chunk_size=8, output_type="pt", device=device
+        image_pixels,
+        image_pose=pose_pixels,
+        # sample_stride = 2 跟原来视频的数目 少了一半 + 1个参考图像 
+        num_frames=pose_pixels.size(0),
+        tile_size=task_config.num_frames, 
+        tile_overlap=task_config.frames_overlap,
+        height=pose_pixels.shape[-2], 
+        width=pose_pixels.shape[-1], 
+        # 这里写死了输出视频的帧率 
+        fps=7,
+        noise_aug_strength=task_config.noise_aug_strength, 
+        num_inference_steps=task_config.num_inference_steps,
+        generator=generator, 
+        min_guidance_scale=task_config.guidance_scale, 
+        max_guidance_scale=task_config.guidance_scale, 
+        # 这类写死了decode chunk size 同时解码的数目  comyfui默认是4 面板上可改
+        decode_chunk_size=8, 
+        # 输出是pytorch tensor?
+        output_type="pt", 
+        device=device
     ).frames.cpu()
     video_frames = (frames * 255.0).to(torch.uint8)
 

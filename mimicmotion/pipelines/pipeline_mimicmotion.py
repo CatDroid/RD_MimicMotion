@@ -171,12 +171,15 @@ class MimicMotionPipeline(DiffusionPipeline):
         image = image.to(device=device, dtype=self.vae.dtype)
         image_latents = self.vae.encode(image).latent_dist.mode()
 
+        # CFG -- classifier_free_guidance
         if do_classifier_free_guidance:
             negative_image_latents = torch.zeros_like(image_latents)
+            # 生成一个与 image_latents 形状和数据类型相同的张量，但所有元素都为零。这被称为“负样本 潜在向量”（negative_image_latents）
+            # 在 CFG 中，negative_image_latents 代表无条件的（或中性）生成，通常与某种随机或零向量相关联。
 
-            # For classifier free guidance, we need to do two forward passes.
+            # For classifier free guidance, we need to do two forward passes. 两个向前推理pass?
             # Here we concatenate the unconditional and text embeddings into a single batch
-            # to avoid doing two forward passes
+            # to avoid doing two forward passes 为了避免执行两次? 所以合并了 无条件和文本的embeding ??
             image_latents = torch.cat([negative_image_latents, image_latents])
 
         # duplicate image_latents for each generation per prompt, using mps friendly method
@@ -329,11 +332,13 @@ class MimicMotionPipeline(DiffusionPipeline):
             extra_step_kwargs["generator"] = generator
         return extra_step_kwargs
 
+    # call by  run_pipeline @ inference.py 
+
     @torch.no_grad()
     def __call__(
         self,
-        image: Union[PIL.Image.Image, List[PIL.Image.Image], torch.FloatTensor],
-        image_pose: Union[torch.FloatTensor],
+        image: Union[PIL.Image.Image, List[PIL.Image.Image], torch.FloatTensor], # 可以是 列表 ?? list len =1 
+        image_pose: Union[torch.FloatTensor], # pose是 pose视频帧数/sample_stride + 1个参考图像
         height: int = 576,
         width: int = 1024,
         num_frames: Optional[int] = None,
@@ -364,59 +369,116 @@ class MimicMotionPipeline(DiffusionPipeline):
                 Image or images to guide image generation. If you provide a tensor, it needs to be compatible with
                 [`CLIPImageProcessor`](https://huggingface.co/lambdalabs/sd-image-variations-diffusers/blob/main/
                 feature_extractor/preprocessor_config.json).
+
+                用于指导图像生成的图像
+
             height (`int`, *optional*, defaults to `self.unet.config.sample_size * self.vae_scale_factor`):
                 The height in pixels of the generated image.
             width (`int`, *optional*, defaults to `self.unet.config.sample_size * self.vae_scale_factor`):
                 The width in pixels of the generated image.
+
+                生成图像的高度  默认是 self.unet.config.sample_size * self.vae_scale_factor
+
+
             num_frames (`int`, *optional*):
                 The number of video frames to generate. Defaults to 14 for `stable-video-diffusion-img2vid` 
                 and to 25 for `stable-video-diffusion-img2vid-xt`
+                生成视频帧的数量 
+                14 用 stable-video-diffusion-img2vid    模型的话 
+                25 用 stable-video-diffusion-img2vid-xt 模型的话 
+
             num_inference_steps (`int`, *optional*, defaults to 25):
                 The number of denoising steps. More denoising steps usually lead to a higher quality image at the
                 expense of slower inference. This parameter is modulated by `strength`.
+
+                去噪步骤的数量。去噪步骤越多，通常图像质量越高，但推理速度越慢。此参数受 `strength` 调节
+
             min_guidance_scale (`float`, *optional*, defaults to 1.0):
                 The minimum guidance scale. Used for the classifier free guidance with first frame.
             max_guidance_scale (`float`, *optional*, defaults to 3.0):
                 The maximum guidance scale. Used for the classifier free guidance with last frame.
+
+                最小/最大 指导尺度 guidance scale。用于分类器 对 第一帧 / 最后一帧的自由指导 free guidance 。
+
             fps (`int`, *optional*, defaults to 7):
                 Frames per second.The rate at which the generated images shall be exported to a video after generation.
                 Note that Stable Diffusion Video's UNet was micro-conditioned on fps-1 during training.
+
+                生成后将生成的图像 导出到视频的速率。
+                请注意 在训练期间 Stable Diffusion Video 的 UNet 是在 fps-1 上进行 "微调" 的   ??? micro-conditioned ???
+
             motion_bucket_id (`int`, *optional*, defaults to 127):
                 The motion bucket ID. Used as conditioning for the generation. 
                 The higher the number the more motion will be in the video.
+
+                运动桶 ID  默认 127
+                用作生成generation的调节conditioning ???
+                数字越高，视频中的运动就越多。
+
             noise_aug_strength (`float`, *optional*, defaults to 0.02):
                 The amount of noise added to the init image, 
                 the higher it is the less the video will look like the init image. Increase it for more motion.
+
+                添加到初始图像的噪声量，
+                噪声量越高，视频看起来就“越不像初始图像”。
+                增加噪声量可获得“更多运动” ???
+
             image_only_indicator (`bool`, *optional*, defaults to False):
                 Whether to treat the inputs as batch of images instead of videos.
+                是否将输入视为"图像批次"而不是"视频"  ??? 
+
             decode_chunk_size (`int`, *optional*):
                 The number of frames to decode at a time.The higher the chunk size, the higher the temporal consistency
                 between frames, but also the higher the memory consumption. 
                 By default, the decoder will decode all frames at once for maximal quality. 
                 Reduce `decode_chunk_size` to reduce memory usage.
+
+                一次解码的帧数。块大小越大，"帧之间"的"时间一致性"越高，但内存消耗也越高。
+
+                默认情况下，解码器将一次性解码"所有帧"以获得"最佳质量"。
+
+                减少`decode_chunk_size`以减少内存使用量。
+
             num_videos_per_prompt (`int`, *optional*, defaults to 1):
                 The number of images to generate per prompt.
+
+                每个提示(prompt)生成的图像数量。 默认是1  
+
             generator (`torch.Generator` or `List[torch.Generator]`, *optional*):
                 A [`torch.Generator`](https://pytorch.org/docs/stable/generated/torch.Generator.html) to make
                 generation deterministic.
+
             latents (`torch.FloatTensor`, *optional*):
                 Pre-generated noisy latents sampled from a Gaussian distribution, to be used as inputs for image
                 generation. Can be used to tweak the same generation with different prompts. If not provided, a latents
                 tensor is generated by sampling using the supplied random `generator`.
+
+                可选
+                从高斯分布中采样的"预生成" 噪声潜变量(noisy latents)，用作图像生成的输入。
+                可用于调整tweak"具有不同提示 (different prompts)"的相同生成(the same generation)。
+                如果未提供，则通过使用提供的随机`generator`进行采样来生成潜变量张量。
+
+
             output_type (`str`, *optional*, defaults to `"pil"`):
                 The output format of the generated image. Choose between `PIL.Image` or `np.array`.
+
             callback_on_step_end (`Callable`, *optional*):
                 A function that calls at the end of each denoising steps during the inference. The function is called
                 with the following arguments: `callback_on_step_end(self: DiffusionPipeline, step: int, timestep: int,
                 callback_kwargs: Dict)`. `callback_kwargs` will include a list of all tensors as specified by
                 `callback_on_step_end_tensor_inputs`.
+
+                在推理期间，在每个去噪步骤结束时调用的函数
+
             callback_on_step_end_tensor_inputs (`List`, *optional*):
                 The list of tensor inputs for the `callback_on_step_end` function. The tensors specified in the list
                 will be passed as `callback_kwargs` argument. You will only be able to include variables listed in the
                 `._callback_tensor_inputs` attribute of your pipeline class.
+
             return_dict (`bool`, *optional*, defaults to `True`):
                 Whether to return a [`~pipelines.stable_diffusion.StableDiffusionPipelineOutput`] instead of a
                 plain tuple.
+
             device:
                 On which device the pipeline runs on.
 
@@ -448,7 +510,12 @@ class MimicMotionPipeline(DiffusionPipeline):
         height = height or self.unet.config.sample_size * self.vae_scale_factor
         width = width or self.unet.config.sample_size * self.vae_scale_factor
 
+        print(f"self.unet.config = {self.unet.config}, vae_scale_factor = {self.vae_scale_factor}")
+        print(f"width = {width}  height = {height} , decode_chunk_size = {decode_chunk_size}, num_frames = {num_frames}")
+
         num_frames = num_frames if num_frames is not None else self.unet.config.num_frames
+
+        # 如果不提供 decode_chunk_size 那么直接用 num_frames 整个pose视频的长度
         decode_chunk_size = decode_chunk_size if decode_chunk_size is not None else num_frames
 
         # 1. Check inputs. Raise error if not correct
@@ -456,10 +523,14 @@ class MimicMotionPipeline(DiffusionPipeline):
 
         # 2. Define call parameters
         if isinstance(image, PIL.Image.Image):
+            # 传入是一个Image图对象 
             batch_size = 1
         elif isinstance(image, list):
+            # 传入是一个列表 [ [C,H,W], [C,H,W],..]
             batch_size = len(image)
+            print(f"image is list, batch_size = {batch_size}")
         else:
+            # 使用 [B,C,H,W]的形式 
             batch_size = image.shape[0]
         device = device if device is not None else self._execution_device
         # here `guidance_scale` is defined analog to the guidance weight `w` of equation (2)
@@ -481,11 +552,14 @@ class MimicMotionPipeline(DiffusionPipeline):
         noise = randn_tensor(image.shape, generator=generator, device=device, dtype=image.dtype)
         image = image + noise_aug_strength * noise
 
+        # print(f"image = {image.shape}") # image = torch.Size([1, 3, 1024, 576]) 就是参考图的尺寸 
+
         self.vae.to(device)
         image_latents = self._encode_vae_image(
             image,
             device=device,
             num_videos_per_prompt=num_videos_per_prompt,
+             # num_videos_per_prompt 默认是1 
             do_classifier_free_guidance=self.do_classifier_free_guidance,
         )
         image_latents = image_latents.to(image_embeddings.dtype)
@@ -493,7 +567,10 @@ class MimicMotionPipeline(DiffusionPipeline):
 
         # Repeat the image latents for each frame so we can concatenate them with the noise
         # image_latents [batch, channels, height, width] ->[batch, num_frames, channels, height, width]
+        #print(f"image_latents 1 = {image_latents.shape}") # [2, 4, 128, 72]
         image_latents = image_latents.unsqueeze(1).repeat(1, num_frames, 1, 1, 1)
+        # unsqueeze(1) 在axix=1前增加一个维度(作为帧数)
+        #print(f"image_latents 2 = {image_latents.shape}") # torch.Size([2, 531=姿态视频帧数/sample_stride+1, 4, 128, 72])
 
         # 5. Get Added Time IDs
         added_time_ids = self._get_add_time_ids(
@@ -508,7 +585,19 @@ class MimicMotionPipeline(DiffusionPipeline):
         added_time_ids = added_time_ids.to(device)
 
         # 4. Prepare timesteps
+
+        # diffuser retrieve_timesteps 
+        # 用于获取扩散过程中的 "时间步长"（timesteps）  不是 时间戳 timestamp !
+        # 在扩散模型中，"时间步长"是指模型在生成图像或其他数据时所经过的步骤。
+        # 每个时间步长对应于一个"噪声水平"，模型通过"反向扩散"过程逐步"去噪"，从而生成目标数据。
+        # 生成时间步长序列: 根据特定的调度策略（如线性、指数等）生成一个时间步长序列，定义从初始噪声到最终输出的去噪过程
+        # 控制生成过程:    通过调整时间步长的"数量和分布"，可以控制生成过程的"速度和质量"。时间步长的"精细程度"直接影响生成的"细节和多样性"。
+
+        # self.scheduler 在 loader.py 是 EulerDiscreteScheduler "use_karras_sigmas": true
         timesteps, num_inference_steps = retrieve_timesteps(self.scheduler, num_inference_steps, device, None)
+        print(f"self.scheduler = {self.scheduler}")
+        print(f"num_inference_steps = {num_inference_steps}, timesteps = {timesteps}")
+        # num_inference_steps 就是 test.yaml配置的 25 步  timesteps 长度也是25 (不是等间隔的??) => 使用Karras分布 不是线性的
 
         # 5. Prepare latent variables
         num_channels_latents = self.unet.config.in_channels
@@ -528,20 +617,52 @@ class MimicMotionPipeline(DiffusionPipeline):
         # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, 0.0)
 
-        # 7. Prepare guidance scale
+        # batch_size = 1 num_videos_per_prompt = 1
+        print(f"batch_size = {batch_size} num_videos_per_prompt = {num_videos_per_prompt}")
+
+        # 7. Prepare guidance scale   
+        # 从 min_guidance_scale 到 max_guidance_scale 的 "等间距" 张量，长度为 num_frames。这通常是为了在多个帧之间逐渐调整引导参数。
+        #  (num_frames,) 变为 (1, num_frames)
         guidance_scale = torch.linspace(min_guidance_scale, max_guidance_scale, num_frames).unsqueeze(0)
+        print(f"guidance_scale 1 = {guidance_scale.shape}")
+
+        # 为了确保数据类型和设备一致
         guidance_scale = guidance_scale.to(device, latents.dtype)
+        # 通过重复操作将 guidance_scale 的第一个维度扩展，使其适应批量处理。
+        # batch_size * num_videos_per_prompt 决定了批次的大小，
+        # 因此扩展后的 guidance_scale 形状将是 (batch_size * num_videos_per_prompt, num_frames)，
         guidance_scale = guidance_scale.repeat(batch_size * num_videos_per_prompt, 1)
+        print(f"guidance_scale 2 = {guidance_scale.shape}")
         guidance_scale = _append_dims(guidance_scale, latents.ndim)
+        print(f"guidance_scale 3 = {guidance_scale.shape}")
 
         self._guidance_scale = guidance_scale
 
+        print(f"num_frames = {num_frames} tile_size = {tile_size} tile_overlap = {tile_overlap}")
+        # num_frames = 531 ( 姿态视频帧数/stride ） tile_size = 配置中的 test_case.num_frames  tile_overlap = 配置中的 test_case.frames_overlap
+
         # 8. Denoising loop
         self._num_timesteps = len(timesteps)
-        indices = [[0, *range(i + 1, min(i + tile_size, num_frames))] for i in
-                   range(0, num_frames - tile_size + 1, tile_size - tile_overlap)]
+        indices = [[0, *range(i + 1, min(i + tile_size, num_frames))] for i in # i 从0开始 到 最后 num_frames - tile_size + 1   
+                   range(0, num_frames - tile_size + 1, tile_size - tile_overlap)] # 步进是 tile_size - tile_overlap(tile_size中有tile_overlap是重叠)
+        
+        # [0, *range(i + 1, min(i + tile_size, num_frames))]  0是一定包含 也就是 tile_size中有一个是0 tile_overlap中也有一个是0
+
+        # e.g 
+        # num_frames: 4  frames_overlap: 2  sample_stride: 2
+        # indices = [   
+        # [0, 1, 2, 3]   
+        # [0, 3, 4, 5]
+        # [0, 5, 6, 7] 
+        # [0, 7, 8, 9]
+        # [0, 9, 10, 11]
+        # .. ]
+        
         if indices[-1][-1] < num_frames - 1:
             indices.append([0, *range(num_frames - tile_size + 1, num_frames)])
+
+        print(f"len(indices) = {len(indices)}")
+        print(f"len(timesteps) = {len(timesteps)}") # 25 ??
 
         self.pose_net.to(device)
         self.unet.to(device)
@@ -559,24 +680,46 @@ class MimicMotionPipeline(DiffusionPipeline):
                 latent_model_input = torch.cat([latent_model_input, image_latents], dim=2)
 
                 # predict the noise residual
+                # 预测噪声残差 ??
                 noise_pred = torch.zeros_like(image_latents)
                 noise_pred_cnt = image_latents.new_zeros((num_frames,))
+
+                # 分块处理中的加权平均或平滑操作。生成的权重在块的中心位置具有较高的值，而在边缘位置权重较低。
+                # 这种对称权重可以用于平滑过渡或减少边界效应。
                 weight = (torch.arange(tile_size, device=device) + 0.5) * 2. / tile_size
                 weight = torch.minimum(weight, 2 - weight)
+
+                #print(f"noise_pred = {noise_pred.shape}") # [2, 531, 4, 128, 72])
+                print(f"weight = {weight}") # weight = tensor([0.2500, 0.7500, 0.7500, 0.2500], device='cuda:0')
+
+                # 一个 timestep 要遍历 整个indices(有重叠) 
                 for idx in indices:
 
-                    # classification-free inference
+                    # print(f"idx = {type(idx)} {len(idx)}") # <class 'list'> 4==tile_size
+
+                    # classification-free inference  image_pose[idx]是取tile_size个pose视频帧
                     pose_latents = self.pose_net(image_pose[idx].to(device))
+                    # print(f"pose_latents = {pose_latents.shape}")  # torch.Size([tile_size, 320 ?, 128 ?, 72 ?])
+
                     _noise_pred = self.unet(
                         latent_model_input[:1, idx],
                         t,
                         encoder_hidden_states=image_embeddings[:1],
                         added_time_ids=added_time_ids[:1],
                         pose_latents=None,
+                        # 第一次 没有 pose_latents
                         image_only_indicator=image_only_indicator,
                         return_dict=False,
                     )[0]
+
+                    # print(f"idx = {idx}") # idx 是会有重叠的 这里+=也会包含之前已经有的idx
+                    # [0, 1, 2, 3]   num_frames: 4  frames_overlap: 2  sample_stride: 2
+                    # [0, 3, 4, 5]
+                    # [0, 5, 6, 7] 
+                    # [0, 7, 8, 9]
+                    # [0, 9, 10, 11]
                     noise_pred[:1, idx] += _noise_pred * weight[:, None, None, None]
+                    # 第一次 unet的区别 加入到 noise_pred[0]  :1
 
                     # normal inference
                     _noise_pred = self.unet(
@@ -585,14 +728,22 @@ class MimicMotionPipeline(DiffusionPipeline):
                         encoder_hidden_states=image_embeddings[1:],
                         added_time_ids=added_time_ids[1:],
                         pose_latents=pose_latents,
+                        # 第二次unet的区别 就是加了 pose_latents
                         image_only_indicator=image_only_indicator,
                         return_dict=False,
                     )[0]
                     noise_pred[1:, idx] += _noise_pred * weight[:, None, None, None]
+                    # 第二次 unet的区别 加入到 noise_pred[1] 1:
+
+                    #  noise_pred [2, 531, 4, 128, 72])
 
                     noise_pred_cnt[idx] += weight
                     progress_bar.update()
+                    # 遍历完 indices 中所有的 tile (每个大小是 tile_size)
+
                 noise_pred.div_(noise_pred_cnt[:, None, None, None])
+
+                
 
                 # perform guidance
                 if self.do_classifier_free_guidance:
@@ -610,10 +761,13 @@ class MimicMotionPipeline(DiffusionPipeline):
 
                     latents = callback_outputs.pop("latents", latents)
 
+        # 从gpu转回cpu??
         self.pose_net.cpu()
         self.unet.cpu()
 
+        # vae 解码 latent
         if not output_type == "latent":
+            print(f"use vae decoder ! latents = {latents.shape} num_frames = {num_frames} decode_chunk_size = {decode_chunk_size}")
             self.vae.decoder.to(device)
             frames = self.decode_latents(latents, num_frames, decode_chunk_size)
             frames = tensor2vid(frames, self.image_processor, output_type=output_type)
