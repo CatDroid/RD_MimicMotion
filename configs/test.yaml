@@ -9,16 +9,71 @@ test_case:
   - ref_video_path: assets/example_data/videos/pose1.mp4
     ref_image_path: assets/example_data/images/demo1.jpg
     # tile_size @ pipeline_mimicmotion.py
-    num_frames: 4
-    resolution: 576
+    num_frames: 16
+    resolution: 448
+    # 需要能够被64整除  短边尺寸
     # tile_overlap  @ pipeline_mimicmotion.py
-    frames_overlap: 2
+    frames_overlap: 12
     num_inference_steps: 25
+    # 不加噪声到原图中 
     noise_aug_strength: 0
     guidance_scale: 2.0
     sample_stride: 2
     fps: 15
     seed: 42
+    decode_chunk_size: 6
+
+# decode_chunk_size: 8 在2080 12G vRAM上会OOM 
+
+# 视频信息 pose1.mp4: Duration:00:00:35.33 1080x1920, 30 fps
 
 
- 
+# 参数: 'num_frames': 2, 'resolution': 576, 'frames_overlap': 1, 'num_inference_steps': 20 'decode_chunk_size': 4
+# 耗时: 1:40:25
+# 输出: Duration: 00:00:35.33 576x1024, 15 fps
+# 效果: 虽然人姿态的确有，但人或者背景会闪烁出其他画面，比较卡通
+
+# 参数: 'num_frames': 4, 'resolution': 576, 'frames_overlap': 2, 'num_inference_steps': 20 'decode_chunk_size': 4
+# 耗时: 1:26:30
+# 输出: Duration:  00:00:35.33  576x1024 15 fps
+# 效果:  人已经没有闪烁出其他东西  背景也没有那么闪烁 只有门还在闪  还是比较卡通没有纹理细节 
+
+
+# 参数: 'num_frames': 8, 'resolution': 576, 'frames_overlap': 4, 'num_inference_steps': 25 'decode_chunk_size': 4
+# 改动: num_frames:8  frames_overlap:4 num_inference_steps:25 
+# 耗时:  1:39:07
+# 输出:  
+# 效果:  num_frames 至少要8帧, 背景才算是稳定 
+
+# 参数: 'num_frames': 16, 'resolution': 384, 'frames_overlap': 8, 'num_inference_steps': 20 'decode_chunk_size': 4
+# 输出: Duration: 00:00:35.33 384x640, 15 fps
+# 效果: 不会闪烁也不会黑的 只是没有什么纹理 分辨率小推理速度也快很多很多 ? 偏卡通化了?
+
+
+# 参数: 'num_frames': 16, 'resolution': 448, 'frames_overlap': 8, 'num_inference_steps': 20 'decode_chunk_size': 4
+# 输出: Duration: 00:00:35.33 448x768 15 fps
+# 效果: 不同时间的稳定多了 纹理细节多了 
+
+# 参数: 'num_frames': 16, 'resolution': 448, 'frames_overlap': 8, 'num_inference_steps': 25 'decode_chunk_size': 4
+# 耗时: 50:16
+# 输出: Duration: 00:00:35.33 448x768 15 fps
+# 效果:  ? 跟上面差不多 ? 20到25step没有明显变化
+
+# 参数: 'num_frames': 16, 'resolution': 448, 'frames_overlap': 8, 'num_inference_steps': 25 'decode_chunk_size': 6
+# 改动: decode_chunk_size 从 4到6 
+# 耗时:  50:09
+# 输出:  Duration: 00:00:35.33 448x768 15 fps
+# 效果:  看起来 跟同组几乎一样 decode_chunk_size 不影响效果
+
+
+# 参数: 'num_frames': 16, 'resolution': 512, 'frames_overlap': 8, 'num_inference_steps': 25 'decode_chunk_size': 6
+# 改动: resolution 提高到 512 
+# 耗时: 1:08:39  
+# 输出:   
+# 效果: 看起来 跟同组几乎一样  同组看起来还好一些 
+
+# 参数: 'num_frames': 16, 'resolution': 448, 'frames_overlap': 12, 'num_inference_steps': 25 'decode_chunk_size': 6
+# 改动: frames_overlap 提高到 12
+# 耗时: 1:38:47  
+# 输出:  
+# 效果:  看起来 跟同组几乎一样

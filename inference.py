@@ -99,15 +99,17 @@ def run_pipeline(pipeline: MimicMotionPipeline, image_pixels, pose_pixels, devic
         tile_overlap=task_config.frames_overlap,
         height=pose_pixels.shape[-2], 
         width=pose_pixels.shape[-1], 
-        # 这里写死了输出视频的帧率 
+        # 这里写死了输出视频的帧率 ?? 不是导出给mp4的  test.yaml task.fps=15
         fps=7,
         noise_aug_strength=task_config.noise_aug_strength, 
         num_inference_steps=task_config.num_inference_steps,
         generator=generator, 
         min_guidance_scale=task_config.guidance_scale, 
         max_guidance_scale=task_config.guidance_scale, 
-        # 这类写死了decode chunk size 同时解码的数目  comyfui默认是4 面板上可改
-        decode_chunk_size=8, 
+        # 这类写死了decode chunk size 同时解码的数目 =8 comyfui默认是4 面板上可改
+        # 给sd img2vid的VAE解码的 
+        # decode_chunk_size 2080 12G内存会OOM  
+        decode_chunk_size=task_config.decode_chunk_size, 
         # 输出是pytorch tensor?
         output_type="pt", 
         device=device
@@ -129,7 +131,9 @@ def main(args):
     infer_config = OmegaConf.load(args.inference_config)
     pipeline = create_pipeline(infer_config, device)
 
+    print(f"args = {args}")
     for task in infer_config.test_case:
+        print(f"task = {task}")
         ############################################## Pre-process data ##############################################
         pose_pixels, image_pixels = preprocess(
             task.ref_video_path, task.ref_image_path, 
@@ -142,11 +146,12 @@ def main(args):
             device, task
         )
         ################################### save results to output folder. ###########################################
+        print(f"inference.py task.fps = {task.fps}")
         save_to_mp4(
             _video_frames, 
             f"{args.output_dir}/{os.path.basename(task.ref_video_path).split('.')[0]}" \
             f"_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4",
-            fps=task.fps,
+            fps=task.fps, # 输出 编码帧率是15fps  test.yaml配置的
         )
 
 def set_logger(log_file=None, log_level=logging.INFO):

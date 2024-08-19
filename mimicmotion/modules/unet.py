@@ -10,6 +10,7 @@ from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.utils import BaseOutput, logging
 
+# 3d unet 
 from diffusers.models.unets.unet_3d_blocks import get_down_block, get_up_block, UNetMidBlockSpatioTemporal
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -29,6 +30,14 @@ class UNetSpatioTemporalConditionOutput(BaseOutput):
 
 # class ModelMixin(torch.nn.Module, PushToHubMixin):
 # 这个是  nn.Module !
+
+# https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/unets/unet_spatio_temporal_condition.py
+# 这个是 mimicmotion 修改了的 
+# 应该基于 不新于 v0.27.2 版本的 diffuser, (requirement写的是 diffusers==0.27.0)  因为 还使用 (torch.FloatTensor,) 和 module.get_processor(return_deprecated_lora=True)
+# forward 增加了两个参数  
+#       pose_latents: torch.Tensor = None,
+#       image_only_indicator: bool = False,
+
 
 class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin):
     r"""
@@ -363,13 +372,19 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
         for module in self.children():
             fn_recursive_feed_forward(module, chunk_size, dim)
 
+    # stable-video-diffusion-img2vid-xt-1-1 
+    # img2vid  图 生 视频  
+    # 所以 unet 会有 有时间 added_time_ids 和  num_frames维度 
     def forward(
             self,
+            # 带噪声输入张量 (batch, num_frames, channel, height, width)   num_frames 是帧数目
             sample: torch.FloatTensor,
             timestep: Union[torch.Tensor, float, int],
             encoder_hidden_states: torch.Tensor,
             added_time_ids: torch.Tensor,
+            # mimicmoition 新增的参数
             pose_latents: torch.Tensor = None,
+            # mimicmoition 新增的参数
             image_only_indicator: bool = False,
             return_dict: bool = True,
     ) -> Union[UNetSpatioTemporalConditionOutput, Tuple]:
@@ -443,10 +458,22 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
         # 2. pre-process
         sample = self.conv_in(sample)
         if pose_latents is not None:
+            # sample 是 生成带噪声的潜在变量  
+            # pose_latents 直接跟 sample 相加 ?? (相当于 contorlnet的输出 )
+            # 为什么 不在外面相机在传入 ??  就是为了在一个self.conv_in 之后才相加?
+            # 
+            # pipeline_mimicmotion.py会做两次uent 来预计这一时间步的噪声分布 
+            #  第一次是无条件 没有传入pose_latent的
+            #  第二次是有条件的 传入pose_latent的 
             sample = sample + pose_latents
 
         image_only_indicator = torch.ones(batch_size, num_frames, dtype=sample.dtype, device=sample.device) \
             if image_only_indicator else torch.zeros(batch_size, num_frames, dtype=sample.dtype, device=sample.device)
+
+        # 原来的实现是
+        #    image_only_indicator = torch.zeros(batch_size, num_frames, dtype=sample.dtype, device=sample.device)
+        # image_only_indicator = True  创建的是 全部 0 (也就是原来的实现)
+        # image_only_indicator = False 创建的是 全部 1 的 (??? 为什么有这样的改动 ???)
 
         down_block_res_samples = (sample,)
         for downsample_block in self.down_blocks:

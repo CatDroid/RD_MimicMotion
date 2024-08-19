@@ -152,12 +152,18 @@ class MimicMotionPipeline(DiffusionPipeline):
         image_embeddings = image_embeddings.view(bs_embed * num_videos_per_prompt, seq_len, -1)
 
         if do_classifier_free_guidance:
+            # 这类的处理 跟后面的vae image类似 做了一个 全0的负向image embeding 
             negative_image_embeddings = torch.zeros_like(image_embeddings)
+
+            # 对于无分类器引导（classifier free guidance），我们需要进行两次前向传播。
+            # 这里我们将无条件的嵌入和"文本嵌入" 连接成一个批次，以避免进行两次前向传播。 -- 图+视频 ==> 视频 ?? 为什么需要 文本嵌入 ??
 
             # For classifier free guidance, we need to do two forward passes.
             # Here we concatenate the unconditional and text embeddings into a single batch
             # to avoid doing two forward passes
             image_embeddings = torch.cat([negative_image_embeddings, image_embeddings])
+
+            # !!! 第一个是 negative_image_embeddings 第二个 image_embeddings 才是参考图的embeding 
 
         return image_embeddings
 
@@ -232,13 +238,19 @@ class MimicMotionPipeline(DiffusionPipeline):
 
         # decode decode_chunk_size frames at a time to avoid OOM
         frames = []
+        # i的 步进是 decode_chunk_size  遍历整个 latents
+        # 窗口滑动  不重叠 
+        print(f"latents.shape[0] = {latents.shape[0]} decode_chunk_size = {decode_chunk_size} accepts_num_frames = {accepts_num_frames}")
         for i in range(0, latents.shape[0], decode_chunk_size):
             num_frames_in = latents[i: i + decode_chunk_size].shape[0]
             decode_kwargs = {}
             if accepts_num_frames:
                 # we only pass num_frames_in if it's expected
+                # 我们只在需要时才传递 num_frames_in
                 decode_kwargs["num_frames"] = num_frames_in
 
+            # 使用VAE解码 
+            # decode_chunk_size 只是影响一次 送 self.vae.decode的数量  并不影响效果??
             frame = self.vae.decode(latents[i: i + decode_chunk_size], **decode_kwargs).sample
             frames.append(frame.cpu())
         frames = torch.cat(frames, dim=0)
@@ -348,6 +360,7 @@ class MimicMotionPipeline(DiffusionPipeline):
         min_guidance_scale: float = 1.0,
         max_guidance_scale: float = 3.0,
         fps: int = 7,
+        # inference.py 配置这个 fps 也是7 ? 注释写的是 '生成后,将"生成的图像"导出到视频的速率'  ?inference.py最后导出视频是15fps ? 
         motion_bucket_id: int = 127,
         noise_aug_strength: float = 0.02,
         image_only_indicator: bool = False,
@@ -404,7 +417,7 @@ class MimicMotionPipeline(DiffusionPipeline):
                 Frames per second.The rate at which the generated images shall be exported to a video after generation.
                 Note that Stable Diffusion Video's UNet was micro-conditioned on fps-1 during training.
 
-                生成后将生成的图像 导出到视频的速率。
+                生成后 将生成的图像 导出到视频的速率 。
                 请注意 在训练期间 Stable Diffusion Video 的 UNet 是在 fps-1 上进行 "微调" 的   ??? micro-conditioned ???
 
             motion_bucket_id (`int`, *optional*, defaults to 127):
@@ -420,7 +433,7 @@ class MimicMotionPipeline(DiffusionPipeline):
                 the higher it is the less the video will look like the init image. Increase it for more motion.
 
                 添加到初始图像的噪声量，
-                噪声量越高，视频看起来就“越不像初始图像”。
+                噪声量越高，视频看起来就“越不像初始图像”。  ---- test.yaml 中 noise_aug_strength = 0.0
                 增加噪声量可获得“更多运动” ???
 
             image_only_indicator (`bool`, *optional*, defaults to False):
@@ -433,7 +446,8 @@ class MimicMotionPipeline(DiffusionPipeline):
                 By default, the decoder will decode all frames at once for maximal quality. 
                 Reduce `decode_chunk_size` to reduce memory usage.
 
-                一次解码的帧数。块大小越大，"帧之间"的"时间一致性"越高，但内存消耗也越高。
+                一次解码的帧数。块大小越大，"帧之间"的"时间一致性"越高，但内存消耗也越高。 
+                --->>> 为什么这么说?? decode_latents  只是一次送self.vae.decode的数量 ???  
 
                 默认情况下，解码器将一次性解码"所有帧"以获得"最佳质量"。
 
@@ -543,19 +557,20 @@ class MimicMotionPipeline(DiffusionPipeline):
         image_embeddings = self._encode_image(image, device, num_videos_per_prompt, self.do_classifier_free_guidance)
         self.image_encoder.cpu()
 
+        # ????
         # NOTE: Stable Diffusion Video was conditioned on fps - 1, which
         # is why it is reduced here.
         fps = fps - 1
 
         # 4. Encode input image using VAE
-        image = self.image_processor.preprocess(image, height=height, width=width).to(device)
-        noise = randn_tensor(image.shape, generator=generator, device=device, dtype=image.dtype)
+        image = self.image_processor.preprocess(image, height=height, width=width).to(device) # 预处理 参考图 裁剪等 为了给 self.vae
+        noise = randn_tensor(image.shape, generator=generator, device=device, dtype=image.dtype) #  noise_aug_strength: 0 不加噪声到参考图 
         image = image + noise_aug_strength * noise
 
         # print(f"image = {image.shape}") # image = torch.Size([1, 3, 1024, 576]) 就是参考图的尺寸 
 
         self.vae.to(device)
-        image_latents = self._encode_vae_image(
+        image_latents = self._encode_vae_image( # 也用vae编码 参考图
             image,
             device=device,
             num_videos_per_prompt=num_videos_per_prompt,
@@ -571,6 +586,14 @@ class MimicMotionPipeline(DiffusionPipeline):
         image_latents = image_latents.unsqueeze(1).repeat(1, num_frames, 1, 1, 1)
         # unsqueeze(1) 在axix=1前增加一个维度(作为帧数)
         #print(f"image_latents 2 = {image_latents.shape}") # torch.Size([2, 531=姿态视频帧数/sample_stride+1, 4, 128, 72])
+
+        # fps=6,  motion_bucket_id=127, noise_aug_strength = 0, batch_size = 1, num_videos_per_prompt = 1. self.do_classifier_free_guidance = True
+        print(f"_get_add_time_ids fps={fps},"\
+                f"motion_bucket_id={motion_bucket_id},"\
+                f"noise_aug_strength = {noise_aug_strength},"\
+                f"batch_size = {batch_size},"\
+                f"num_videos_per_prompt = {num_videos_per_prompt},"\
+                f"self.do_classifier_free_guidance = {self.do_classifier_free_guidance}")
 
         # 5. Get Added Time IDs
         added_time_ids = self._get_add_time_ids(
@@ -612,7 +635,12 @@ class MimicMotionPipeline(DiffusionPipeline):
             generator,
             latents,
         )
-        latents = latents.repeat(1, num_frames // tile_size + 1, 1, 1, 1)[:, :num_frames]
+        print(f"prepare_latents latents = {latents.shape} ")                # torch.Size([1, 16, 4, 96, 56]) 
+        latents = latents.repeat(1, num_frames // tile_size + 1, 1, 1, 1)   # num_frames // tile_size + 1 = 34  # 531//16+1 = 33+1=34 # num_frames这个不是test.yaml配置的num_frames
+        print(f"repeat {num_frames // tile_size + 1} latents = {latents.shape} ") #  torch.Size([1, 544, 4, 96, 56])  #  544 = 16 * 34  # num_frames是 pose视频帧数/sample_stride + 1参考图
+        latents = latents[:, :num_frames]
+        # 最多取 num_frames  这个也跟视频的长度 有关系   ??? 4x96x56 跟什么有关系??
+        print(f"crop to {num_frames} latents = {latents.shape}") # torch.Size([1, 531, 4, 96, 56])
 
         # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, 0.0)
@@ -624,7 +652,7 @@ class MimicMotionPipeline(DiffusionPipeline):
         # 从 min_guidance_scale 到 max_guidance_scale 的 "等间距" 张量，长度为 num_frames。这通常是为了在多个帧之间逐渐调整引导参数。
         #  (num_frames,) 变为 (1, num_frames)
         guidance_scale = torch.linspace(min_guidance_scale, max_guidance_scale, num_frames).unsqueeze(0)
-        print(f"guidance_scale 1 = {guidance_scale.shape}")
+        print(f"guidance_scale 1 = {guidance_scale.shape}") # torch.Size([1, 531])  531 = pose视频帧数/sample_stride + 一个参考图像 
 
         # 为了确保数据类型和设备一致
         guidance_scale = guidance_scale.to(device, latents.dtype)
@@ -632,9 +660,9 @@ class MimicMotionPipeline(DiffusionPipeline):
         # batch_size * num_videos_per_prompt 决定了批次的大小，
         # 因此扩展后的 guidance_scale 形状将是 (batch_size * num_videos_per_prompt, num_frames)，
         guidance_scale = guidance_scale.repeat(batch_size * num_videos_per_prompt, 1)
-        print(f"guidance_scale 2 = {guidance_scale.shape}")
+        print(f"guidance_scale 2 = {guidance_scale.shape}") # torch.Size([1, 531]) 因为 batch_size =1 num_videos_per_prompt = 1
         guidance_scale = _append_dims(guidance_scale, latents.ndim)
-        print(f"guidance_scale 3 = {guidance_scale.shape}")
+        print(f"guidance_scale 3 = {guidance_scale.shape}") # torch.Size([1, 531, 1, 1, 1]) ?? 多了后面的 1 1 1 ??
 
         self._guidance_scale = guidance_scale
 
@@ -664,6 +692,9 @@ class MimicMotionPipeline(DiffusionPipeline):
         print(f"len(indices) = {len(indices)}")
         print(f"len(timesteps) = {len(timesteps)}") # 25 ??
 
+        print(f"image_embeddings = {image_embeddings.shape}")   # torch.Size([2, 1, 1024]) 2是因为 多了一个 negative_image_embeddings 
+        print(f"added_time_ids   = {added_time_ids.shape}")     # torch.Size([2, 3])
+
         self.pose_net.to(device)
         self.unet.to(device)
 
@@ -672,6 +703,8 @@ class MimicMotionPipeline(DiffusionPipeline):
 
         with self.progress_bar(total=len(timesteps) * len(indices)) as progress_bar:
             for i, t in enumerate(timesteps):
+                # 遍历所有的时间步, 每个时间步中会遍历 整个视频 的 所有带部分重叠的 片段 (也就是会遍历整个视频所有帧)
+
                 # expand the latents if we are doing classifier free guidance
                 latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
@@ -680,31 +713,68 @@ class MimicMotionPipeline(DiffusionPipeline):
                 latent_model_input = torch.cat([latent_model_input, image_latents], dim=2)
 
                 # predict the noise residual
-                # 预测噪声残差 ??
+                # 预测噪声残差 ?? 
+                # 跟 image_latents 的尺寸是一样的 ?? 
                 noise_pred = torch.zeros_like(image_latents)
                 noise_pred_cnt = image_latents.new_zeros((num_frames,))
+                #print(f"noise_pred = {noise_pred.shape}") # [2, 531, 4, 128, 72]) 2=无添加+有条件  531=pose视频帧数/sample_stride+1 
 
                 # 分块处理中的加权平均或平滑操作。生成的权重在块的中心位置具有较高的值，而在边缘位置权重较低。
                 # 这种对称权重可以用于平滑过渡或减少边界效应。
                 weight = (torch.arange(tile_size, device=device) + 0.5) * 2. / tile_size
                 weight = torch.minimum(weight, 2 - weight)
 
-                #print(f"noise_pred = {noise_pred.shape}") # [2, 531, 4, 128, 72])
-                print(f"weight = {weight}") # weight = tensor([0.2500, 0.7500, 0.7500, 0.2500], device='cuda:0')
+                #print(f"weight = {weight}") # weight = tensor([0.2500, 0.7500, 0.7500, 0.2500], device='cuda:0')
 
-                # 一个 timestep 要遍历 整个indices(有重叠) 
+                # 一个 timestep (迭代 降噪 comfyui面板上steps) 要遍历 整个indices(有重叠) 
                 for idx in indices:
 
                     # print(f"idx = {type(idx)} {len(idx)}") # <class 'list'> 4==tile_size
 
-                    # classification-free inference  image_pose[idx]是取tile_size个pose视频帧
+                    # classification-free inference 
+                    # Classification-Free Inference 是更广义的术语，可以指任何"不依赖分类器"的"推理过程"， 
+                    # Classifier-Free Guidance 可以看作是 Classification-Free Inference 的一种特定应用形式，主要用于扩散模型中，以实现"更好的条件控制"
+
+
+                    # image_pose[idx]是取tile_size个pose视频帧
+                    # self.pose_net 相当于controlnet的作用 ?   是不是可以一次预生成好全部, 后面就直接取就好? (内存占用??)
+                    # pose_net.py forward没有看到 self.pose_net会记录之前的状态 
                     pose_latents = self.pose_net(image_pose[idx].to(device))
                     # print(f"pose_latents = {pose_latents.shape}")  # torch.Size([tile_size, 320 ?, 128 ?, 72 ?])
+
+
+                    # 扩散模型（diffusion model）中，每一个时间步（time step）通常都要运行一次 U-Net 模型
+                    #   噪声添加过程（Forward Process）：扩散模型的训练过程中，将逐步增加噪声到图像上，模拟从原始图像到纯噪声的过程。这个过程不涉及 U-Net。
+                    #   噪声去除过程（Reverse Process）：在推理阶段，扩散模型从纯噪声开始，通过"逐步去除"噪声来生成图像。
+                    #                                   每一个"时间步"，都会"预测"当前图像中的噪声分布，并根据该预测”更新图像"
+                    # U-Net的作用
+                    #   在每个时间步，U-Net 接收 "当前的噪声图像" 和 "时间步的编码"（可能还有额外的 "条件信息"，如文本嵌入）作为输入，并输出一个"噪声的估计值"。  
+                    #   通过这个噪声"估计值"，模型可以"更新"当前的图像状态，从而在"多个时间步" 后从纯噪声生成清晰的图像 
+                    #  
+                    # 有条件和无条件生成：
+                    #    在生成任务中，模型可能希望生成与特定条件（如文本描述）一致的图像。这被称为"有条件生成"
+
+                    # Classifier-Free Guidance 
+                    #    提供了一种"通过模型自身"实现"条件控制"的方式，而不依赖于"外部分类器"。
+                    #
+                    # 两次 U-Net 前向传播的目的
+                    #       第一次前向传播（无条件）
+                    #           模型接收带有噪声的图像和一个“空”或无条件的输入（通常通过将条件信息设为零或忽略）进行前向传播。
+                    #           模型输出这个图像中估计的噪声。
+                    #           这个过程提供了一个基础的噪声估计，它不依赖于任何条件信息
+                    #       第二次前向传播（有条件）   
+                    #           模型接收相同的带有噪声的图像，但这次附带有条件信息（如文本嵌入）。
+                    #           模型输出估计的噪声，这次的估计是基于条件信息的。
+                    #           这个过程提供了一个基于条件信息的噪声估计，用于生成与条件相关的图像。
+
+                    # self.unet 就是 UNetSpatioTemporalConditionModel @ loader.py  # UNet 时空条件模型 Spatio Temporal Condition
 
                     _noise_pred = self.unet(
                         latent_model_input[:1, idx],
                         t,
-                        encoder_hidden_states=image_embeddings[:1],
+                        encoder_hidden_states=image_embeddings[:1], # !! 第一个是全0的image embeding 
+                                                                    # 取反面的image embeding ? 也可能是None?  
+                                                                    #  _encode_image 函数 判断 do_classifier_free_guidance 加入一个全0的negative_image_embeddings
                         added_time_ids=added_time_ids[:1],
                         pose_latents=None,
                         # 第一次 没有 pose_latents
@@ -712,45 +782,66 @@ class MimicMotionPipeline(DiffusionPipeline):
                         return_dict=False,
                     )[0]
 
+
                     # print(f"idx = {idx}") # idx 是会有重叠的 这里+=也会包含之前已经有的idx
                     # [0, 1, 2, 3]   num_frames: 4  frames_overlap: 2  sample_stride: 2
                     # [0, 3, 4, 5]
                     # [0, 5, 6, 7] 
                     # [0, 7, 8, 9]
                     # [0, 9, 10, 11]
+                    # 加权的方式 加入到 这个时间步 所有视频帧 的 noise_pred 中
                     noise_pred[:1, idx] += _noise_pred * weight[:, None, None, None]
+                    
+                    # 上面latent_model_input image_embeddings和added_time_ids  都是取 [:1]  下面 第二次是取 [1:]  正面和方面的image embeding 
                     # 第一次 unet的区别 加入到 noise_pred[0]  :1
+                    # 第二次 unet的区别 加入到 noise_pred[1]  1:
 
                     # normal inference
                     _noise_pred = self.unet(
                         latent_model_input[1:, idx],
                         t,
-                        encoder_hidden_states=image_embeddings[1:],
+                        encoder_hidden_states=image_embeddings[1:],   # 编码器隐状态 ?? 取正面的image embeding ?                                         
                         added_time_ids=added_time_ids[1:],
                         pose_latents=pose_latents,
-                        # 第二次unet的区别 就是加了 pose_latents
+                        # 第二次unet的区别 就是加了 pose_latents 相当于加了条件 
                         image_only_indicator=image_only_indicator,
                         return_dict=False,
                     )[0]
                     noise_pred[1:, idx] += _noise_pred * weight[:, None, None, None]
-                    # 第二次 unet的区别 加入到 noise_pred[1] 1:
 
-                    #  noise_pred [2, 531, 4, 128, 72])
+                    #  noise_pred [2, 531, 4, 128, 72]) 
+                    #           531 = pose视频帧数/sample_stride + 参考图  #  这个大小 就是视频的长度相关了 
+                    #           2 =  无条件的噪声预测  + 有条件的噪声预测
 
                     noise_pred_cnt[idx] += weight
                     progress_bar.update()
                     # 遍历完 indices 中所有的 tile (每个大小是 tile_size)
 
                 noise_pred.div_(noise_pred_cnt[:, None, None, None])
-
+                # 当前时间步, 遍历了完整个视频 
+                # ?? 这个时间步 每个视频帧的 噪声预测  noise_pred ?
                 
-
+                # 直到生成
+                # 混合噪声估计：通过对有条件和无条件的噪声估计进行线性组合（通常是通过一种权重的方式），模型可以更精确地控制生成图像的质量和"条件一致性"。
+                #               用一个权重参数 α / guidance_scale 来调节有条件估计和无条件估计的比重：
+                #               Final Output = Unconditional Output + α × (Conditional Output − Unconditional Output)
+                #               这个权重参数 控制了条件信息对生成结果的影响程度
+                #                   较高的值意味着生成的图像将更"严格地遵循条件信息"，
+                #                   较低的值则会保留更多的随机性。
+                # 
+                # 通过对这两个估计进行组合, 模型可以在不依赖"外部分类器"的情况下，增强生成图像"与条件信息之间的相关性"
+                # 
                 # perform guidance
                 if self.do_classifier_free_guidance:
                     noise_pred_uncond, noise_pred_cond = noise_pred.chunk(2)
                     noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_cond - noise_pred_uncond)
 
+                # ?? 用 这个时间步 预测的 (所有帧) noise_pred 来更新 潜空间表述 的 带噪声的图像(去噪)
+                # latents    [1, 531, 4,  96, 56]
+                # noise_pred [2, 531, 4, 128, 72]  最后俩的分辨率不同 ??
+                #  
                 # compute the previous noisy sample x_t -> x_t-1
+                # 从估计的噪声分布中'采样' 去噪 x_t 得到 x_t - 1 
                 latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
 
                 if callback_on_step_end is not None:
