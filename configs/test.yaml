@@ -10,7 +10,7 @@ test_case:
     ref_image_path: assets/example_data/images/demo1.jpg
     # tile_size @ pipeline_mimicmotion.py
     num_frames: 16
-    resolution: 448
+    resolution: 512
     # 需要能够被64整除  短边尺寸
     # tile_overlap  @ pipeline_mimicmotion.py
     frames_overlap: 12
@@ -77,3 +77,10 @@ test_case:
 # 耗时: 1:38:47  
 # 输出:  
 # 效果:  看起来 跟同组几乎一样
+
+
+# 参数: 'num_frames': 16, 'resolution': 512, 'frames_overlap': 12, 'num_inference_steps': 25 'decode_chunk_size': 6
+# 改动: resolution 提高到 512 
+# 耗时: 
+# 输出:  
+# 效果: 

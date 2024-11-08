@@ -440,6 +440,7 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
 
         emb = self.time_embedding(t_emb)
 
+        # 对时间做embeding 
         time_embeds = self.add_time_proj(added_time_ids.flatten())
         time_embeds = time_embeds.reshape((batch_size, -1))
         time_embeds = time_embeds.to(emb.dtype)
@@ -454,12 +455,15 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
         emb = emb.repeat_interleave(num_frames, dim=0)
         # encoder_hidden_states: [batch, 1, channels] -> [batch * frames, 1, channels]
         encoder_hidden_states = encoder_hidden_states.repeat_interleave(num_frames, dim=0)
+        # encoder_hidden_states 参考图的 image_embeddings (clip模型 transformers.CLIPVisionModelWithProjection)
 
         # 2. pre-process
         sample = self.conv_in(sample)
         if pose_latents is not None:
             # sample 是 生成带噪声的潜在变量  
-            # pose_latents 直接跟 sample 相加 ?? (相当于 contorlnet的输出 )
+            # pose_latents 直接跟 sample 相加 ?? 
+            # (很类似 contorlnet的输出 , 但是这里不是image embeding/clip向量/condition向量, 而是latent, 直接与降噪中的latent相加)
+            # (参考图的image embeding 就是conditon向量/clip向量 在unet每一步都用到)
             # 为什么 不在外面相机在传入 ??  就是为了在一个self.conv_in 之后才相加?
             # 
             # pipeline_mimicmotion.py会做两次uent 来预计这一时间步的噪声分布 
@@ -482,6 +486,7 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
                     hidden_states=sample,
                     temb=emb,
                     encoder_hidden_states=encoder_hidden_states,
+                    # 有交叉注意力机制 采用  encoder_hidden_states (参考图的image embeding/clip向量/condition向量) 条件
                     image_only_indicator=image_only_indicator,
                 )
             else:

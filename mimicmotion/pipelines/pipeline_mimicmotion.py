@@ -622,6 +622,8 @@ class MimicMotionPipeline(DiffusionPipeline):
         print(f"num_inference_steps = {num_inference_steps}, timesteps = {timesteps}")
         # num_inference_steps 就是 test.yaml配置的 25 步  timesteps 长度也是25 (不是等间隔的??) => 使用Karras分布 不是线性的
 
+        print(f"prepare_latents before latents = {latents} generator = {generator}")
+
         # 5. Prepare latent variables
         num_channels_latents = self.unet.config.in_channels
         latents = self.prepare_latents(
@@ -709,12 +711,13 @@ class MimicMotionPipeline(DiffusionPipeline):
                 latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
-                # Concatenate image_latents over channels dimension
+                #  这是图生图? 参考图的vae latent也作为输入  每个timpsteap都会加入一样的？
+                # Concatenate image_latents over channels dimension 
                 latent_model_input = torch.cat([latent_model_input, image_latents], dim=2)
 
                 # predict the noise residual
                 # 预测噪声残差 ?? 
-                # 跟 image_latents 的尺寸是一样的 ?? 
+                # 跟 image_latents 的尺寸是一样的 ?? (参考图的vae latent)
                 noise_pred = torch.zeros_like(image_latents)
                 noise_pred_cnt = image_latents.new_zeros((num_frames,))
                 #print(f"noise_pred = {noise_pred.shape}") # [2, 531, 4, 128, 72]) 2=无添加+有条件  531=pose视频帧数/sample_stride+1 
@@ -770,14 +773,15 @@ class MimicMotionPipeline(DiffusionPipeline):
                     # self.unet 就是 UNetSpatioTemporalConditionModel @ loader.py  # UNet 时空条件模型 Spatio Temporal Condition
 
                     _noise_pred = self.unet(
-                        latent_model_input[:1, idx],
+                        latent_model_input[:1, idx],# 噪声图也是 1参考图+pose视频/2
                         t,
+                        # encoder_hidden_states 这个是参考图的embeding/condition向量 (第一个是全0的条件 相当于没有)
                         encoder_hidden_states=image_embeddings[:1], # !! 第一个是全0的image embeding 
                                                                     # 取反面的image embeding ? 也可能是None?  
                                                                     #  _encode_image 函数 判断 do_classifier_free_guidance 加入一个全0的negative_image_embeddings
                         added_time_ids=added_time_ids[:1],
                         pose_latents=None,
-                        # 第一次 没有 pose_latents
+                        # 第一次 没有 pose_latents 
                         image_only_indicator=image_only_indicator,
                         return_dict=False,
                     )[0]
